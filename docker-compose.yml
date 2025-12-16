@@ -5,7 +5,7 @@ services:
     build: ./backend
     container_name: shutterstacker-backend
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       # Ephemeral temp storage for session images
       - temp_data:/app/temp
