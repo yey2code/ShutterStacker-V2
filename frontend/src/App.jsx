@@ -228,7 +228,7 @@ export default function App() {
                     multiple
                     accept="image/*"
                     onChange={handleFileUpload}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
                 <div className="flex flex-col items-center group-hover:scale-105 transition-transform duration-200">
                     <div className="p-4 bg-blue-100 text-blue-600 rounded-full mb-4">
