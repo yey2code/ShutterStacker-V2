@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: shutterstacker-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Ephemeral temp storage for session images
+      - temp_data:/app/temp
+    restart: unless-stopped
+    environment:
+      - MAX_UPLOAD_SIZE=500M # Optional config if needed later
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: shutterstacker-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  temp_data:
