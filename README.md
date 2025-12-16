@@ -1,33 +1,62 @@
-# ShutterStacker V2
+# ShutterStacker V2 VPS
 
-A Local SaaS application for automating stock photography processing with Google Gemini and Exiftool.
+A powerful "Local SaaS" application for automating stock photography processing. It leverages **Google Gemini** for intelligent metadata generation and **ExifTool** for standard-compliant metadata embedding, all wrapped in a modern **React** interface and deployable via **Docker**.
 
-## Setup
+## 🚀 Features
 
-1.  **Map your Pictures folder**:
-    Open `docker-compose.yml` and find the `backend` service volumes.
-    Change `C:/Users/YourName/Pictures` to the actual path of your stock photos on your machine.
-    ```yaml
-    volumes:
-      - C:/Users/ActualUser/Pictures:/mnt/pictures
+*   **Drag & Drop Batch Upload**: Easily upload multiple images for processing.
+*   **Context-Aware AI Analysis**: Uses **Google Gemini 2.0 Flash** to generate Titles, Descriptions, Keywords, and Categories. You can provide optional context hints (e.g., "Aerial shot of downtown") to guide the AI.
+*   **Interactive Review**: Review and edit the generated metadata before finalizing.
+*   **Embedded Metadata**: Writes metadata directly into the image header (IPTC/XMP standards) using ExifTool, ensuring compatibility with all stock agencies.
+*   **Auto-FTP**: Automatically uploads processed files to Shutterstock (or other FTP-enabled agencies) in the background.
+*   **Browser-Based Storage**: API keys and FTP credentials are stored securely in your browser's local storage—no complex backend config required.
+
+## 🛠️ Tech Stack
+
+*   **Frontend**: React, Vite, Tailwind CSS, Lucide React
+*   **Backend**: Python, FastAPI
+*   **Tools**: Google Gemini API, ExifTool, ftplib
+*   **Deployment**: Docker, Docker Compose, Nginx
+
+## 📦 Setup & Installation
+
+### Prerequisites
+*   [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
+*   A **Google Gemini API Key** (Get it from [Google AI Studio](https://aistudio.google.com/)).
+*   FTP Credentials for your stock agency (e.g., Shutterstock).
+
+### Running the App
+
+1.  **Clone the repository**:
+    ```bash
+    git clone <repository_url>
+    cd "ShutterStacker V2"
     ```
 
-2.  **Build and Run**:
+2.  **Start with Docker Compose**:
     ```bash
     docker-compose up --build
     ```
 
-3.  **Access the App**:
-    Open your browser to `http://localhost:3000`.
+3.  **Access the Application**:
+    Open your browser and navigate to:
+    > **http://localhost:3000**
 
-## Features
+## ⚙️ Configuration
 
-- **Local File Access**: Browse your mapped local folders.
-- **AI Analysis**: Uses Google Gemini 1.5 Flash to generate metadata.
-- **Metadata Embedding**: Writes Title, Description, and Keywords directly into image files (IPTC/XMP).
-- **FTP Upload**: Uploads processed images directly to Shutterstock.
+No `.env` files are strictly required for the initial startup. All user-specific credentials are configured directly in the UI:
 
-## Configuration
+1.  Click the **Settings** (gear icon) in the top right corner.
+2.  Enter your **Gemini API Key**.
+3.  Enter your **FTP Username** and **Password**.
+4.  Click **Save Credentials**.
 
-- **Gemini API Key**: You will need a valid API key from Google AI Studio.
-- **FTP Credentials**: Your Shutterstock contributor FTP details.
+## 🏗️ Architecture
+
+-   **Frontend Service**: Serves the React SPA via Nginx on port `3000`.
+-   **Backend Service**: Runs FastAPI on port `8000`. Handles file uploads, communicates with Gemini, executes ExifTool commands, and manages FTP uploads.
+-   **Shared Volume**: A `temp_data` Docker volume is shared between services to allow the frontend to display uploaded images while the backend processes them.
+
+## 📝 License
+
+[MIT](LICENSE)
