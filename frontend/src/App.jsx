@@ -154,11 +154,15 @@ export default function App() {
                     context_map: contextMap
                 })
             });
-            if (!res.ok) throw new Error("Analysis failed");
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.detail || `Analysis failed: ${res.status} ${res.statusText}`);
+            }
             const data = await res.json();
             setMetadata(data.results);
             setStep(3);
         } catch (err) {
+            console.error(err);
             setError(err.message);
         } finally {
             setIsAnalyzing(false);
@@ -230,7 +234,7 @@ export default function App() {
                     onChange={handleFileUpload}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
-                <div className="flex flex-col items-center group-hover:scale-105 transition-transform duration-200">
+                <div className="flex flex-col items-center group-hover:scale-105 transition-transform duration-200 pointer-events-none">
                     <div className="p-4 bg-blue-100 text-blue-600 rounded-full mb-4">
                         <UploadCloud className="w-10 h-10" />
                     </div>

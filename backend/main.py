@@ -31,7 +31,9 @@ app.add_middleware(
 )
 
 # Directories
-TEMP_DIR = "/app/temp"
+# Directories
+# Use a relative directory for wider compatibility (Windows local dev vs Docker)
+TEMP_DIR = os.path.join(os.getcwd(), "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Mount temp dir for serving images to frontend
@@ -104,7 +106,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
     return {"session_id": session_id, "files": file_list}
 
 @app.post("/analyze")
-async def analyze_images(request: AnalyzeRequest):
+def analyze_images(request: AnalyzeRequest):
     """
     1. Iterates images in session.
     2. Sends to Gemini with optional context.
@@ -190,7 +192,7 @@ async def analyze_images(request: AnalyzeRequest):
     return {"results": results}
 
 @app.post("/embed-and-upload")
-async def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTasks):
+def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTasks):
     """
     1. Embed metadata via ExifTool.
     2. Upload to FTP.
