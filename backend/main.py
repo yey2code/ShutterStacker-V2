@@ -8,6 +8,7 @@ import uuid
 import logging
 import asyncio
 from typing import List, Optional, Dict
+import concurrent.futures
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -128,10 +129,8 @@ def analyze_images(request: AnalyzeRequest):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={request.api_key}"
     headers = {'Content-Type': 'application/json'}
 
-    for filename in image_files:
+    def process_single_image(filename):
         filepath = os.path.join(session_path, filename)
-        
-        # Get Context
         user_context = request.context_map.get(filename, "")
         
         system_prompt = (
@@ -164,30 +163,42 @@ def analyze_images(request: AnalyzeRequest):
              try:
                 text_content = data['candidates'][0]['content']['parts'][0]['text']
              except (KeyError, IndexError):
-                 logger.error(f"Unexpected Gemini response structure: {data}")
-                 raise ValueError("Invalid API response format")
+                 logger.error(f"Unexpected Gemini response structure for {filename}: {data}")
+                 # Return specific error structure
+                 return {
+                     "filename": filename,
+                     "title": "Error Processing",
+                     "description": "Invalid API response format",
+                     "keywords": "",
+                     "category": ""
+                 }
 
              # Cleanup json
              clean_json = text_content.replace("```json", "").replace("```", "").strip()
              metadata = json.loads(clean_json)
              
-             results.append({
+             return {
                  "filename": filename,
                  "title": metadata.get("Title", ""),
                  "description": metadata.get("Description", ""),
                  "keywords": metadata.get("Keywords", ""),
                  "category": metadata.get("Category", "")
-             })
+             }
 
         except Exception as e:
             logger.error(f"Error processing {filename}: {e}")
-            results.append({
+            return {
                 "filename": filename,
                 "title": "Error Processing",
                 "description": str(e),
                 "keywords": "",
                 "category": ""
-            })
+            }
+
+    # Parallel Execution
+    # Max workers = 5 to match typical browser concurrency or reasonable parallel limit
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(process_single_image, image_files))
 
     return {"results": results}
 
