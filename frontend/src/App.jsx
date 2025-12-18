@@ -134,7 +134,7 @@ export default function App() {
         }
     };
 
-    // 2. ANALYZE
+    // 2. ANALYZE (Async Polling Pattern)
     const handleAnalyze = async () => {
         if (!geminiKey) {
             setShowSettings(true);
@@ -145,7 +145,8 @@ export default function App() {
         setError(null);
 
         try {
-            const res = await fetch(`${API_BASE_URL}/analyze`, {
+            // 1. Start Job
+            const startRes = await fetch(`${API_BASE_URL}/analyze`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -154,13 +155,38 @@ export default function App() {
                     context_map: contextMap
                 })
             });
-            if (!res.ok) {
-                const errData = await res.json().catch(() => ({}));
-                throw new Error(errData.detail || `Analysis failed: ${res.status} ${res.statusText}`);
+
+            if (!startRes.ok) {
+                const errData = await startRes.json().catch(() => ({}));
+                throw new Error(errData.detail || `Analysis start failed: ${startRes.status}`);
             }
-            const data = await res.json();
-            setMetadata(data.results);
-            setStep(3);
+
+            // 2. Poll for Status
+            const pollInterval = 2000;
+            const maxAttempts = 300; // 10 minutes max
+            let attempts = 0;
+
+            while (attempts < maxAttempts) {
+                await new Promise(r => setTimeout(r, pollInterval));
+                attempts++;
+
+                const statusRes = await fetch(`${API_BASE_URL}/analyze/${sessionId}`);
+                if (!statusRes.ok) throw new Error("Status check failed");
+
+                const statusData = await statusRes.json();
+
+                if (statusData.status === 'completed') {
+                    setMetadata(statusData.results);
+                    setStep(3);
+                    return; // Success
+                } else if (statusData.status === 'failed') {
+                    throw new Error(statusData.error || "Analysis job failed on server");
+                }
+                // If 'processing', loop continues
+            }
+
+            throw new Error("Analysis timed out (client-side polling limit reached)");
+
         } catch (err) {
             console.error(err);
             setError(err.message);

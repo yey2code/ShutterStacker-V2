@@ -42,6 +42,9 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Mount temp dir for serving images to frontend
 app.mount("/temp", StaticFiles(directory=TEMP_DIR), name="temp")
 
+# --- In-Memory Job Store (Simple for single instance) ---
+JOBS = {} # {session_id: {"status": "processing"|"completed"|"failed", "results": [], "error": None}}
+
 # --- Pydantic Models ---
 
 class AnalyzeRequest(BaseModel):
@@ -108,32 +111,16 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     return {"session_id": session_id, "files": file_list}
 
-@app.post("/analyze")
-def analyze_images(request: AnalyzeRequest):
-    """
-    1. Iterates images in session.
-    2. Sends to Gemini with optional context.
-    3. Returns JSON list of metadata.
-    """
-    session_path = os.path.join(TEMP_DIR, request.session_id)
-    if not os.path.exists(session_path):
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    results = []
-
-    # Get list of image files
-    try:
-        image_files = [f for f in os.listdir(session_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-    except Exception as e:
-         raise HTTPException(status_code=500, detail=f"Error reading session dir: {e}")
-
-    # Gemini Setup
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={request.api_key}"
+# --- Helper for Background Analysis ---
+def process_analysis_job(session_id: str, api_key: str, context_map: dict, image_files: list, session_path: str):
+    logger.info(f"Starting analysis job for session {session_id} with {len(image_files)} images")
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
 
     def process_single_image(filename):
         filepath = os.path.join(session_path, filename)
-        user_context = request.context_map.get(filename, "")
+        user_context = context_map.get(filename, "")
         
         system_prompt = (
             "Analyze this image for stock photography. "
@@ -174,16 +161,37 @@ def analyze_images(request: AnalyzeRequest):
                              continue
                          else:
                              logger.error(f"Max retries reached for {filename} (429 Rate Limit)")
-                             raise e
+                             return {
+                                 "filename": filename,
+                                 "title": "Error Processing",
+                                 "description": "Rate limit exceeded after retries",
+                                 "keywords": "",
+                                 "category": ""
+                             }
                      else:
-                         raise e # Re-raise other HTTP errors immediately
+                         # Other HTTP errors
+                         return {
+                             "filename": filename,
+                             "title": "Error Processing",
+                             "description": f"HTTP Error: {e}",
+                             "keywords": "",
+                             "category": ""
+                         }
              
-             # Extract text response - handling potential structure variations
+             # Extract text response bound check
+             if 'candidates' not in data or not data['candidates']:
+                  return {
+                     "filename": filename,
+                     "title": "Error Processing",
+                     "description": "No candidates returned",
+                     "keywords": "",
+                     "category": ""
+                 }
+                 
              try:
                 text_content = data['candidates'][0]['content']['parts'][0]['text']
              except (KeyError, IndexError):
                  logger.error(f"Unexpected Gemini response structure for {filename}: {data}")
-                 # Return specific error structure
                  return {
                      "filename": filename,
                      "title": "Error Processing",
@@ -194,7 +202,16 @@ def analyze_images(request: AnalyzeRequest):
 
              # Cleanup json
              clean_json = text_content.replace("```json", "").replace("```", "").strip()
-             metadata = json.loads(clean_json)
+             try:
+                metadata = json.loads(clean_json)
+             except json.JSONDecodeError:
+                return {
+                     "filename": filename,
+                     "title": "Error Processing",
+                     "description": "Failed to parse JSON response",
+                     "keywords": "",
+                     "category": ""
+                 }
              
              return {
                  "filename": filename,
@@ -214,12 +231,62 @@ def analyze_images(request: AnalyzeRequest):
                 "category": ""
             }
 
-    # Parallel Execution
-    # Reduced max_workers to 3 to be nicer to rate limits while still being parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        results = list(executor.map(process_single_image, image_files))
+    try:
+        # Reduced max_workers to 3
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            results = list(executor.map(process_single_image, image_files))
+        
+        JOBS[session_id]["status"] = "completed"
+        JOBS[session_id]["results"] = results
+        logger.info(f"Job {session_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Job {session_id} failed: {e}")
+        JOBS[session_id]["status"] = "failed"
+        JOBS[session_id]["error"] = str(e)
 
-    return {"results": results}
+
+@app.post("/analyze")
+def analyze_images(request: AnalyzeRequest, background_tasks: BackgroundTasks):
+    """
+    Starts background analysis job.
+    """
+    session_path = os.path.join(TEMP_DIR, request.session_id)
+    if not os.path.exists(session_path):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Get list of image files
+    try:
+        image_files = [f for f in os.listdir(session_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=f"Error reading session dir: {e}")
+    
+    # Initialize Job
+    JOBS[request.session_id] = {
+        "status": "processing",
+        "results": [],
+        "error": None
+    }
+    
+    # Start Background Task
+    background_tasks.add_task(
+        process_analysis_job, 
+        request.session_id, 
+        request.api_key, 
+        request.context_map, 
+        image_files, 
+        session_path
+    )
+
+    return {"status": "processing", "message": "Analysis started in background"}
+
+
+@app.get("/analyze/{session_id}")
+def get_analysis_status(session_id: str):
+    job = JOBS.get(session_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 @app.post("/embed-and-upload")
 def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTasks):
