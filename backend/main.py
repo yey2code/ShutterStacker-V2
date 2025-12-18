@@ -7,6 +7,8 @@ import shutil
 import uuid
 import logging
 import asyncio
+import time
+import random
 from typing import List, Optional, Dict
 import concurrent.futures
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
@@ -155,9 +157,26 @@ def analyze_images(request: AnalyzeRequest):
                 }]
             }
              
-             response = requests.post(url, headers=headers, json=payload)
-             response.raise_for_status()
-             data = response.json()
+             # Retry logic for 429
+             max_retries = 3
+             for attempt in range(max_retries + 1):
+                 try:
+                     response = requests.post(url, headers=headers, json=payload)
+                     response.raise_for_status()
+                     data = response.json()
+                     break # Success, exit loop
+                 except requests.exceptions.HTTPError as e:
+                     if e.response.status_code == 429:
+                         if attempt < max_retries:
+                             sleep_time = (2 ** attempt) + random.uniform(0, 1) # Exponential backoff + jitter
+                             logger.warning(f"Rate limit hit for {filename}. Retrying in {sleep_time:.2f}s...")
+                             time.sleep(sleep_time)
+                             continue
+                         else:
+                             logger.error(f"Max retries reached for {filename} (429 Rate Limit)")
+                             raise e
+                     else:
+                         raise e # Re-raise other HTTP errors immediately
              
              # Extract text response - handling potential structure variations
              try:
@@ -196,8 +215,8 @@ def analyze_images(request: AnalyzeRequest):
             }
 
     # Parallel Execution
-    # Max workers = 5 to match typical browser concurrency or reasonable parallel limit
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # Reduced max_workers to 3 to be nicer to rate limits while still being parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         results = list(executor.map(process_single_image, image_files))
 
     return {"results": results}
