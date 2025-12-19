@@ -191,7 +191,7 @@ def process_analysis_job(session_id: str, api_key: str, context_map: dict, image
                                 ]
                             }
                         ],
-                        model="llama-3.2-90b-vision-preview",
+                        model="meta-llama/llama-4-scout-17b-16e-instruct",
                         temperature=0,
                         response_format={"type": "json_object"}
                      )
