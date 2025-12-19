@@ -17,6 +17,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import requests
 from ftplib import FTP
+from PIL import Image
+import io
+from groq import Groq
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -90,24 +93,51 @@ async def upload_files(files: List[UploadFile] = File(...)):
     """
     session_id = str(uuid.uuid4())
     session_path = os.path.join(TEMP_DIR, session_id)
-    os.makedirs(session_path, exist_ok=True)
+    originals_path = os.path.join(session_path, "originals")
+    proxies_path = os.path.join(session_path, "proxies")
+    
+    os.makedirs(originals_path, exist_ok=True)
+    os.makedirs(proxies_path, exist_ok=True)
 
     file_list = []
 
     for file in files:
         try:
-            file_location = os.path.join(session_path, file.filename)
-            # Safe async file write
+            # 1. Save Master
+            master_location = os.path.join(originals_path, file.filename)
             content = await file.read()
-            with open(file_location, 'wb') as f:
+            with open(master_location, 'wb') as f:
                 f.write(content)
             
-            # Construct accessible URL (assuming frontend can access /temp via proxy or direct)
-            # For this setup, we return filename and frontend constructs URL: API_URL + /temp/ + session_id + / + filename
-            file_list.append(file.filename)
+            # 2. Generate Proxy
+            try:
+                # Open image from memory or file
+                with Image.open(master_location) as img:
+                    # Convert to RGB if necessary (e.g. for PNGs with transparency)
+                    if img.mode in ('RGBA', 'P'): 
+                        img = img.convert('RGB')
+                        
+                    # Calculate new size (max 1024px)
+                    img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    
+                    # Save Proxy
+                    proxy_filename = os.path.splitext(file.filename)[0] + ".jpg"
+                    proxy_location = os.path.join(proxies_path, proxy_filename)
+                    
+                    img.save(proxy_location, "JPEG", quality=80)
+                    
+                    # Store only the filename
+                    # Returning both master and proxy filenames to maintain mapping
+                    file_list.append({
+                        "original": file.filename,
+                        "proxy": proxy_filename
+                    })
+            except Exception as e:
+                logger.error(f"Failed to create proxy for {file.filename}: {e}")
+                pass
+
         except Exception as e:
             logger.error(f"Failed to upload {file.filename}: {e}")
-            # Continue with other files or raise? Continuing seems better for UX.
 
     return {"session_id": session_id, "files": file_list}
 
@@ -115,11 +145,26 @@ async def upload_files(files: List[UploadFile] = File(...)):
 def process_analysis_job(session_id: str, api_key: str, context_map: dict, image_files: list, session_path: str):
     logger.info(f"Starting analysis job for session {session_id} with {len(image_files)} images")
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
+    try:
+        client = Groq(api_key=api_key)
+    except Exception as e:
+        logger.error(f"Failed to initialize Groq client: {e}")
+        JOBS[session_id]["status"] = "failed"
+        JOBS[session_id]["error"] = "Invalid API Configuration"
+        return
 
     def process_single_image(filename):
-        filepath = os.path.join(session_path, filename)
+        # Target Proxie
+        filepath = os.path.join(session_path, "proxies", filename)
+        if not os.path.exists(filepath):
+             return {
+                "filename": filename,
+                "title": "Error Processing",
+                "description": "Proxy file not found",
+                "keywords": "",
+                "category": ""
+            }
+
         user_context = context_map.get(filename, "")
         
         system_prompt = (
@@ -131,77 +176,42 @@ def process_analysis_job(session_id: str, api_key: str, context_map: dict, image
         try:
              with open(filepath, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-
-             payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": system_prompt},
-                        {"inline_data": {
-                            "mime_type": "image/jpeg", # simplified
-                            "data": encoded_string
-                        }}
-                    ]
-                }]
-            }
              
-             # Retry logic for 429
+             # Retry logic
              max_retries = 3
              for attempt in range(max_retries + 1):
                  try:
-                     response = requests.post(url, headers=headers, json=payload)
-                     response.raise_for_status()
-                     data = response.json()
-                     break # Success, exit loop
-                 except requests.exceptions.HTTPError as e:
-                     if e.response.status_code == 429:
-                         if attempt < max_retries:
-                             sleep_time = (2 ** attempt) + random.uniform(0, 1) # Exponential backoff + jitter
-                             logger.warning(f"Rate limit hit for {filename}. Retrying in {sleep_time:.2f}s...")
-                             time.sleep(sleep_time)
-                             continue
-                         else:
-                             logger.error(f"Max retries reached for {filename} (429 Rate Limit)")
-                             return {
-                                 "filename": filename,
-                                 "title": "Error Processing",
-                                 "description": "Rate limit exceeded after retries",
-                                 "keywords": "",
-                                 "category": ""
-                             }
+                     chat_completion = client.chat.completions.create(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": system_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_string}"}}
+                                ]
+                            }
+                        ],
+                        model="llama-3.2-11b-vision-preview",
+                        temperature=0,
+                        response_format={"type": "json_object"}
+                     )
+
+                     content = chat_completion.choices[0].message.content
+                     break # Success
+                 except Exception as e:
+                     if "429" in str(e) and attempt < max_retries:
+                         sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                         logger.warning(f"Rate limit hit for {filename}. Retrying in {sleep_time:.2f}s...")
+                         time.sleep(sleep_time)
+                         continue
+                     elif attempt == max_retries:
+                         logger.error(f"Max retries reached for {filename}")
+                         return { "filename": filename, "title": "Error", "description": "Rate limit exceeded", "keywords": "", "category": "" }
                      else:
-                         # Other HTTP errors
-                         return {
-                             "filename": filename,
-                             "title": "Error Processing",
-                             "description": f"HTTP Error: {e}",
-                             "keywords": "",
-                             "category": ""
-                         }
-             
-             # Extract text response bound check
-             if 'candidates' not in data or not data['candidates']:
-                  return {
-                     "filename": filename,
-                     "title": "Error Processing",
-                     "description": "No candidates returned",
-                     "keywords": "",
-                     "category": ""
-                 }
-                 
-             try:
-                text_content = data['candidates'][0]['content']['parts'][0]['text']
-             except (KeyError, IndexError):
-                 logger.error(f"Unexpected Gemini response structure for {filename}: {data}")
-                 return {
-                     "filename": filename,
-                     "title": "Error Processing",
-                     "description": "Invalid API response format",
-                     "keywords": "",
-                     "category": ""
-                 }
+                         raise e
 
              # Cleanup json
-             clean_json = text_content.replace("```json", "").replace("```", "").strip()
+             clean_json = content.replace("```json", "").replace("```", "").strip()
              try:
                 metadata = json.loads(clean_json)
              except json.JSONDecodeError:
@@ -232,7 +242,7 @@ def process_analysis_job(session_id: str, api_key: str, context_map: dict, image
             }
 
     try:
-        # Reduced max_workers to 3
+        # Reduced max_workers to 3 to avoid hitting Groq rate limits too hard (though they are generous)
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             results = list(executor.map(process_single_image, image_files))
         
@@ -255,9 +265,10 @@ def analyze_images(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     if not os.path.exists(session_path):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get list of image files
+    # Get list of image files from PROXIES directory
+    proxies_path = os.path.join(session_path, "proxies")
     try:
-        image_files = [f for f in os.listdir(session_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        image_files = [f for f in os.listdir(proxies_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
     except Exception as e:
          raise HTTPException(status_code=500, detail=f"Error reading session dir: {e}")
     
@@ -303,7 +314,8 @@ def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTa
     
     # --- Embedding ---
     for item in request.metadata:
-        image_path = os.path.join(session_path, item.filename)
+        # Target Master File
+        image_path = os.path.join(session_path, "originals", item.filename)
         if not os.path.exists(image_path):
             continue
 
@@ -342,7 +354,8 @@ def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTa
             
             for item in request.metadata:
                 filename = item.filename
-                file_path = os.path.join(session_path, filename)
+                # Target Master File
+                file_path = os.path.join(session_path, "originals", filename)
                 
                 if not os.path.exists(file_path): 
                     continue

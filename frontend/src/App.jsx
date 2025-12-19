@@ -81,7 +81,7 @@ export default function App() {
     const [showSettings, setShowSettings] = useState(false);
 
     // Config
-    const [geminiKey, setGeminiKey] = useState(localStorage.getItem('gemini_key') || '');
+    const [groqKey, setGroqKey] = useState(localStorage.getItem('groq_key') || '');
     const [ftpUser, setFtpUser] = useState(localStorage.getItem('ftp_user') || '');
     const [ftpPass, setFtpPass] = useState(localStorage.getItem('ftp_pass') || '');
 
@@ -100,7 +100,7 @@ export default function App() {
 
     // Save Settings
     const saveSettings = () => {
-        localStorage.setItem('gemini_key', geminiKey);
+        localStorage.setItem('groq_key', groqKey);
         localStorage.setItem('ftp_user', ftpUser);
         localStorage.setItem('ftp_pass', ftpPass);
         setShowSettings(false);
@@ -125,7 +125,7 @@ export default function App() {
             if (!res.ok) throw new Error("Upload failed");
             const data = await res.json();
             setSessionId(data.session_id);
-            setImages(data.files);
+            setImages(data.files); // Now array of {original, proxy}
             setStep(2);
         } catch (err) {
             setError(err.message);
@@ -136,7 +136,7 @@ export default function App() {
 
     // 2. ANALYZE (Async Polling Pattern)
     const handleAnalyze = async () => {
-        if (!geminiKey) {
+        if (!groqKey) {
             setShowSettings(true);
             return;
         }
@@ -151,7 +151,7 @@ export default function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     session_id: sessionId,
-                    api_key: geminiKey,
+                    api_key: groqKey,
                     context_map: contextMap
                 })
             });
@@ -220,7 +220,16 @@ export default function App() {
                 body: JSON.stringify({
                     session_id: sessionId,
                     project_name: "Upload_Batch",
-                    metadata: metadata,
+                    metadata: metadata.map(m => {
+                        // Find original filename corresponding to this proxy (if m.filename is proxy)
+                        // The analysis returns result with proxy filename.
+                        // We need to send ORIGINAL filename to backend for embedding.
+                        const imgObj = images.find(img => img.proxy === m.filename);
+                        return {
+                            ...m,
+                            filename: imgObj ? imgObj.original : m.filename
+                        };
+                    }),
                     ftp_user: ftpUser,
                     ftp_pass: ftpPass
                 })
@@ -298,23 +307,23 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {images.map((img) => (
-                    <div key={img} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden group">
+                {images.map((imgObj) => (
+                    <div key={imgObj.proxy} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden group">
                         <div className="aspect-square bg-slate-100 relative overflow-hidden">
                             <img
-                                src={`/temp/${sessionId}/${img}`}
-                                alt={img}
+                                src={`/temp/${sessionId}/proxies/${imgObj.proxy}`}
+                                alt={imgObj.original}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             />
                         </div>
                         <div className="p-3">
-                            <p className="text-xs font-mono text-slate-400 mb-2 truncate" title={img}>{img}</p>
+                            <p className="text-xs font-mono text-slate-400 mb-2 truncate" title={imgObj.original}>{imgObj.original}</p>
                             <input
                                 type="text"
                                 placeholder="E.g. Eiffel Tower, Sunset..."
                                 className="w-full text-sm px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-purple-200 outline-none"
-                                value={contextMap[img] || ''}
-                                onChange={(e) => setContextMap({ ...contextMap, [img]: e.target.value })}
+                                value={contextMap[imgObj.proxy] || ''}
+                                onChange={(e) => setContextMap({ ...contextMap, [imgObj.proxy]: e.target.value })}
                             />
                         </div>
                     </div>
@@ -341,7 +350,7 @@ export default function App() {
                     <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex gap-6">
                         <div className="w-48 h-48 bg-slate-100 rounded-lg overflow-hidden flex-shrink-0">
                             <img
-                                src={`/temp/${sessionId}/${item.filename}`}
+                                src={`/temp/${sessionId}/proxies/${item.filename}`}
                                 alt={item.filename}
                                 className="w-full h-full object-cover"
                             />
@@ -465,13 +474,13 @@ export default function App() {
             <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="Settings">
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Gemini API Key</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Groq API Key</label>
                         <div className="relative">
                             <Key className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                             <input
                                 type="password"
-                                value={geminiKey}
-                                onChange={e => setGeminiKey(e.target.value)}
+                                value={groqKey}
+                                onChange={e => setGroqKey(e.target.value)}
                                 className="w-full pl-9 px-3 py-2 border rounded-lg"
                             />
                         </div>
