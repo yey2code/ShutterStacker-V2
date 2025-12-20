@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import requests
-from ftplib import FTP
+from ftplib import FTP_TLS
 from PIL import Image
 import io
 from groq import Groq
@@ -349,8 +349,9 @@ def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTa
     upload_errors = []
 
     try:
-        with FTP(request.ftp_host) as ftp:
+        with FTP_TLS(request.ftp_host) as ftp:
             ftp.login(user=request.ftp_user, passwd=request.ftp_pass)
+            ftp.prot_p()
             
             for item in request.metadata:
                 filename = item.filename
