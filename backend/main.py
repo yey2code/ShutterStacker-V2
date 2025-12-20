@@ -322,15 +322,19 @@ def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTa
         cmd = [
             "exiftool",
             "-overwrite_original",
+            "-sep", ", ", # Split keywords by comma
             f"-Title={item.title}",
             f"-Description={item.description}",
             f"-Keywords={item.keywords}",
             f"-Category={item.category}", 
             f"-IPTC:Caption-Abstract={item.description}",
             f"-IPTC:Keywords={item.keywords}",
+            f"-IPTC:ObjectName={item.title}", # Standard Title
+            f"-IPTC:SupplementalCategories={item.category}",
             f"-XMP:Title={item.title}",
             f"-XMP:Description={item.description}",
             f"-XMP:Subject={item.keywords}",
+            f"-XMP-dc:Subject={item.keywords}", # Standard Subject/Keywords
             image_path
         ]
         
