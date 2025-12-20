@@ -349,9 +349,12 @@ def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTa
     upload_errors = []
 
     try:
-        with FTP_TLS(request.ftp_host) as ftp:
-            ftp.login(user=request.ftp_user, passwd=request.ftp_pass)
+        ftp = FTP_TLS()
+        try:
+            ftp.connect(request.ftp_host)
+            ftp.auth()
             ftp.prot_p()
+            ftp.login(user=request.ftp_user, passwd=request.ftp_pass)
             
             for item in request.metadata:
                 filename = item.filename
@@ -367,6 +370,11 @@ def embed_and_upload(request: EmbedUploadRequest, background_tasks: BackgroundTa
                     uploaded_files.append(filename)
                 except Exception as e:
                     upload_errors.append(f"FTP Upload failed for {filename}: {e}")
+        finally:
+            try:
+                ftp.quit()
+            except:
+                ftp.close()
                     
     except Exception as e:
          return {"status": "failed", "error": f"FTP Connection failed: {str(e)}", "embed_errors": embed_errors}
