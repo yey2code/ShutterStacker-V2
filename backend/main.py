@@ -169,7 +169,9 @@ def process_analysis_job(session_id: str, api_key: str, context_map: dict, image
         
         system_prompt = (
             "Analyze this image for stock photography. "
-            "Return PURE JSON (no markdown formatting) with keys: Title, Description, Keywords (comma separated string), Category (Choose from standard stock categories). "
+            "Return PURE JSON (no markdown formatting) with keys: Title, Description, Keywords (comma separated string), Category. "
+            "IMPORTANT: 'Category' MUST be exactly one of the following strings (choose the best fit): "
+            "Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage. "
             f"Additional Context provided by user: '{user_context}'. Override visual inferences if this context contradicts them."
         )
 
