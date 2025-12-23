@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
-const API_BASE_URL = "/api"; // Nginx or Vite proxy handles this
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://api.shutterstacker.yeylab.com";
 
 // --- COMPONENTS ---
 
@@ -311,7 +311,7 @@ export default function App() {
                     <div key={imgObj.proxy} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden group">
                         <div className="aspect-square bg-slate-100 relative overflow-hidden">
                             <img
-                                src={`/temp/${sessionId}/proxies/${imgObj.proxy}`}
+                                src={`${API_BASE_URL}/temp/${sessionId}/proxies/${imgObj.proxy}`}
                                 alt={imgObj.original}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             />
@@ -350,7 +350,7 @@ export default function App() {
                     <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex gap-6">
                         <div className="w-48 h-48 bg-slate-100 rounded-lg overflow-hidden flex-shrink-0">
                             <img
-                                src={`/temp/${sessionId}/proxies/${item.filename}`}
+                                src={`${API_BASE_URL}/temp/${sessionId}/proxies/${item.filename}`}
                                 alt={item.filename}
                                 className="w-full h-full object-cover"
                             />
